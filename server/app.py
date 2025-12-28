@@ -14,10 +14,9 @@ from langchain_pinecone import PineconeVectorStore
 from langchain_core.prompts import PromptTemplate
 from langchain_core.runnables import RunnablePassthrough
 from langchain_core.output_parsers import StrOutputParser
+from langchain.memory import ConversationBufferWindowMemory # <-- short Memory for conversation history, last 4
 
 load_dotenv(override=True)
-
-
 app = Flask(__name__)
 CORS(app)
 
@@ -29,32 +28,37 @@ PINECONE_INDEX_NAME = "respi-guard"
 
 # print("GOOGLE_API_KEY:", GOOGLE_API_KEY if GOOGLE_API_KEY else "NOT FOUND")
 
-# ================== VECTOR STORE ==================
+
+
+
+######################################################################################################################
+#conds and function for API 1:advisory + AQI 
+
+# VECTOR STORE
 embeddings = GoogleGenerativeAIEmbeddings(model="models/text-embedding-004")
 
 vectorstore = PineconeVectorStore(
     index_name=PINECONE_INDEX_NAME,
     embedding=embeddings,
 )
-
 retriever = vectorstore.as_retriever(search_kwargs={"k": 3})
 
-# ================== LLM ==================
 llm = ChatGoogleGenerativeAI(
     model="gemini-2.5-flash",
     temperature=0.3,
 )
 
-# ===============The "Smart" AQI Converter (Backend) ==================
-def calculate_indian_aqi(pm2_5):
+
+
+# The "Smart" AQI Converter
+def calculate_indian_aqi(pm2_5):   #### <---Indian Context
     """
     Calculates India's National Air Quality Index (NAQI) for PM2.5
     Based on CPCB (Central Pollution Control Board) breakpoints.
     """
     c = float(pm2_5)
     
-    # Linear interpolation formula: 
-    # I = I_low + ( (I_high - I_low) / (C_high - C_low) ) * (C - C_low)
+    # Linear interpolation formula:  I = I_low + ( (I_high - I_low) / (C_high - C_low) ) * (C - C_low)
     
     if c <= 30: # Good (0-50)
         return round(0 + (50 - 0) / (30 - 0) * (c - 0))
@@ -116,10 +120,8 @@ def get_live_aqi(lat, lon):
     except Exception as e:
         print(f"❌ [AQI HELPER CRASH]: {e}")
         return None
-    
-    
 
-
+    
 
 ## 1st retrieve ->  format -> send to LLM! ### 
 
@@ -136,19 +138,20 @@ def format_docs(docs):
 
 
 
-# ================== PROMPT ==================
 
+# ================== PROMPT ==================
+#Prompt API1
 ADVISORY_PROMPT = PromptTemplate.from_template(
     """
 You are Respi-Guard. Analyze the Indian Air Quality (NAQI) and user health.
-Return your response in strictly VALID JSON format (no markdown code blocks).
+Return your response in strictly VALID JSON format.
 
 Structure:
 {{
-  "advisory_text": "A 2-sentence medical warning citing sources.",
+  "advisory_text": "Medical advice citing sources, but adding practical mitigation (e.g., N95 masks).",
   "activities": {{
-     "outdoor_exercise": {{"status": "Avoid", "color": "red"}},
-     "light_walk": {{"status": "Caution", "color": "yellow"}},
+     "outdoor_exercise": {{"status": "Avoid", "color": "red"}}, 
+     "light_walk": {{"status": "Caution (Mask Required)", "color": "yellow"}}, 
      "indoor_ventilation": {{"status": "Safe", "color": "green"}}
   }}
 }}
@@ -164,15 +167,19 @@ LIVE AIR QUALITY:
 (Note: 'indian_aqi' follows CPCB standards. >300 is Very Poor.)
 
 INSTRUCTIONS:
-1. Use specific limits/treatments from context.
-2. ALWAYS cite the source (e.g., "According to GINA...").
-3. Be empathetic but professional.
+1. **Prioritize Safety but be Pragmatic:** - For "outdoor_exercise": If AQI > 200 (Poor), mark as RED ("Avoid"). Heavy breathing is dangerous.
+   - For "light_walk" (Commute): If AQI is High (200-400), do NOT mark as Red. Mark as YELLOW ("Caution") and strictly advise wearing an N95 Mask. Only mark Red if AQI > 400 (Severe).
+   - For "indoor_ventilation": If AQI > 150, mark as RED ("Close Windows"). Use Air Purifier if possible.
+
+2. ALWAYS mention "N95 Mask" if the status is Yellow or Red.
+3. Cite sources (GINA/WHO).
 
 RESPONSE:
 """
 )
 
 
+#Prompt API2
 CHAT_PROMPT = PromptTemplate.from_template(
     """
 You are Respi-Guard, an expert medical AI assistant.
@@ -201,6 +208,7 @@ RESPONSE:
 )
 
 
+
 # ================== RAG CHAIN updated to latest, ig, ig ==================
 def build_advisory_chain(user_profile, aqi_data):
     return (
@@ -227,16 +235,36 @@ def build_chat_chain(user_profile, aqi_data):
         | llm
         | StrOutputParser()
     )
+######################################################################################################################
+
+
+
+#########################################################################
+           # ====== MEMORY STORE FOR CHAT: API 2 ====== #      
+memory_store = {}                                                       #
+                                                                        #            
+def get_memory(session_id):                                             #                                                                   
+    if session_id not in memory_store:                                  #                                        
+        memory_store[session_id] = ConversationBufferWindowMemory(      #                                                                         
+            k=4,                                                        #
+            return_messages=True                                        #
+        )                                                               #        
+    return memory_store[session_id]                                     #
+
+#########################################################################
 
 
 
 
-                                                               ####### ROUTES ##########
+
+                                                                    #============#
+                                                               #======= ROUTES ========#
+                                                                    #============#
 # =========================
 # API 1: MORNING ADVISORY
 # =========================
 
-@app.route("/get-advisory", methods=["POST"])
+@app.route("/api/get-advisory", methods=["POST"])
 def get_advisory():
     data = request.json
 
@@ -292,24 +320,27 @@ def get_advisory():
 # API 2: ASK DOCTOR (CHAT) 
 # =========================
 
-@app.route("/ask-doctor", methods=["POST"])
+@app.route("/api/ask-doctor", methods=["POST"])
 def ask_doctor():
     data = request.json
 
+    session_id = data.get("session_id", "default")
     question = data.get("query")
     user_profile = data.get("user_profile", "General Public")
     aqi_context = data.get("aqi_context", "Unknown")
 
-    # USE THE CHAT CHAIN (Uses the Text/Conversation Prompt)
+    memory = get_memory(session_id)
+
     rag_chain = build_chat_chain(
         user_profile=str(user_profile),
         aqi_data=str(aqi_context),
+        memory=memory
     )
-
     response = rag_chain.invoke(question)
 
-    # Return simple JSON with just the text response
     return jsonify({"response": response})
+
+
 
 
 

@@ -3,21 +3,16 @@ import re
 from twilio.rest import Client
 import firebase_admin
 from firebase_admin import credentials, firestore
-from flask import request, jsonify
+from flask import jsonify, request
 from langchain_core.prompts import PromptTemplate
 from langchain_core.runnables import RunnablePassthrough
 from langchain_core.output_parsers import StrOutputParser
-import datetime
 
-
-# Load Twilio keys from environment
 TWILIO_SID = os.getenv("TWILIO_ACCOUNT_SID")
 TWILIO_AUTH = os.getenv("TWILIO_AUTH_TOKEN")
 TWILIO_FROM = os.getenv("TWILIO_FROM_NUMBER")
 
-# ================== FIREBASE SETUP (Hackathon Safe Mode) ==================
-# Try to initialize the real DB if you have the key
-cred = credentials.Certificate("firebase-admin-key.json")
+cred = credentials.Certificate("firebase-admin-key.json") #<-- same name as of the key file
 firebase_admin.initialize_app(cred)
 db = firestore.client()
 
@@ -31,7 +26,6 @@ give clear, imperative, numbered instructions for managing an acute asthma attac
 
 CONTEXT:
 {context}
-
 USER AGE:
 {user_age}
 
@@ -48,12 +42,12 @@ RESPONSE:
 
 
 
-def register_routes(app, retriever, llm):
 
+def register_routes(app, retriever, llm):
     def format_docs(docs):
         return "\n".join([d.page_content for d in docs])
 
-    # UPDATED: Accepts condition and meds now
+    # Accepts condition and medications fetched from firestore
     def build_sos_chain(user_age, user_condition, user_meds):
         return (
             {
@@ -67,10 +61,6 @@ def register_routes(app, retriever, llm):
             | llm
             | StrOutputParser()
         )
-
-
-
-
 
     # ================== ROUTE 1: SMART SOS ALERT ==================
     @app.route("/api/sos-alert", methods=["POST"])
@@ -149,7 +139,8 @@ def register_routes(app, retriever, llm):
         call_status = "Skipped"
         msg_status = "Skipped"
 
-        # 6. TWILIO ACTIONS
+
+        # ###############6. TWILIO ACTS ###############
         if TWILIO_SID and TWILIO_AUTH and TWILIO_FROM:
             try:
                 client = Client(TWILIO_SID, TWILIO_AUTH)
@@ -163,6 +154,7 @@ def register_routes(app, retriever, llm):
                 )
                 msg_status = f"WhatsApp Sent ({message.sid})"
                 print(f"✅ WhatsApp Sent: {message.sid}")
+
 
                 # --- B: CALL ---
                 print("📞 Calling...")
