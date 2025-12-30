@@ -1,4 +1,4 @@
-# 🫁 Respi-Guard: AI-Powered Respiratory Health Assistant
+# ⛄RespiGuard: AI-Powered Respiratory Health Assistant
 
 ![React](https://img.shields.io/badge/Frontend-React%20%2B%20Vite-61DAFB) ![Flask](https://img.shields.io/badge/Backend-Flask-000000) ![Gemini](https://img.shields.io/badge/AI-Google%20Gemini-8E75B2) ![Firebase](https://img.shields.io/badge/Database-Firebase-FFCA28)
 
