@@ -34,17 +34,41 @@ PINECONE_INDEX_NAME = "respi-guard"
 # print("GOOGLE_API_KEY:", GOOGLE_API_KEY if GOOGLE_API_KEY else "NOT FOUND")
 
 #firebase setup
+# try:
+#     if not firebase_admin._apps:
+#         cred = credentials.Certificate("firebase-admin-key.json")
+#         firebase_admin.initialize_app(cred)
+#     db = firestore.client()
+#     print("🔥 Firebase Admin Connected in app.py")
+# except Exception as e:
+#     print(f"⚠️ Firebase Setup Error: {e}")
+#     print("Running in MOCK DB mode.")
+#     db = None
+
 try:
     if not firebase_admin._apps:
-        cred = credentials.Certificate("firebase-admin-key.json")
+        # Check if running on Render (Environment Variable method)
+        firebase_json_str = os.getenv("FIREBASE_JSON_STR")
+        
+        if firebase_json_str:
+            # Load credentials from the environment string
+            cred_dict = json.loads(firebase_json_str)
+            cred = credentials.Certificate(cred_dict)
+            print("☁️ Loading Firebase from Environment Variable")
+        else:
+            # Fallback to local file (for development)
+            cred = credentials.Certificate("firebase-admin-key.json")
+            print("💻 Loading Firebase from Local File")
+
         firebase_admin.initialize_app(cred)
+
     db = firestore.client()
-    print("🔥 Firebase Admin Connected in app.py")
+    print("🔥 Firebase Admin Connected")
+
 except Exception as e:
     print(f"⚠️ Firebase Setup Error: {e}")
     print("Running in MOCK DB mode.")
     db = None
-
 
 
 # VECTOR STORE
